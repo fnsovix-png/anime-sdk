@@ -54,6 +54,16 @@ export class CurlFallbackTransport implements HttpTransport {
   }
 
   async fetch(url: string, init: RequestInit): Promise<Response> {
+    // `x-force-curl: 1` skips fetch entirely: sites behind a Cloudflare
+    // challenge answer 403 (not an error), so the fallback never runs.
+    const forced =
+      !!init.headers &&
+      !(init.headers instanceof Headers) &&
+      !Array.isArray(init.headers) &&
+      String((init.headers as Record<string, string>)['x-force-curl'] ?? '') === '1';
+    if (forced && typeof process !== 'undefined' && process.versions?.node) {
+      return this.curlFetch(url, init);
+    }
     try {
       return await fetch(url, init);
     } catch (err: any) {
@@ -73,7 +83,8 @@ export class CurlFallbackTransport implements HttpTransport {
     }
   }
 
-  private async curlFetch(targetUrl: string, options: RequestInit): Promise<Response> {
+  /** Forced curl path: used when fetch is served a bot challenge. */
+  async curlFetch(targetUrl: string, options: RequestInit): Promise<Response> {
     const cp = await import('child_process');
     const execSync = cp.execSync;
 
@@ -106,6 +117,7 @@ export class CurlFallbackTransport implements HttpTransport {
     }
 
     let headerArgs = '';
+    delete headers['x-force-curl'];
     for (const [key, val] of Object.entries(headers)) {
       headerArgs += ` -H ${JSON.stringify(`${key}: ${val}`)}`;
     }

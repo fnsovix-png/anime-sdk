@@ -8,6 +8,7 @@ import {
   GogoanimeProvider,
   GoyabuProvider,
   MegaPlayProvider,
+  HentaiHavenProvider,
   AnilistMeta,
   MappingClient,
   HttpClient,
@@ -67,6 +68,7 @@ try {
       new GogoanimeProvider(httpClient),
       new GoyabuProvider(httpClient),
       new MegaPlayProvider(httpClient),
+      new HentaiHavenProvider(httpClient),
     ],
     metaProviders: [
       new AnilistMeta(httpClient, {
