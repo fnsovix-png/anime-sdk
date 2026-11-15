@@ -12,6 +12,17 @@ import {
   ISubtitleTrack,
 } from '../types/index.js';
 
+export function megaPlayEmbed(embedUrl: string, language: ContentLanguage): ResolvedMediaStream {
+  return {
+    type: 'video',
+    streams: [{ sourceUrl: embedUrl, isHLS: false, isEmbed: true, quality: 'auto', language }],
+  };
+}
+
+function isErrorPage(page: string): boolean {
+  return page.includes('<title>Error - MegaPlay</title>');
+}
+
 export interface MegaPlayOptions {
   baseUrl?: string;
 }
@@ -61,6 +72,7 @@ export class MegaPlayProvider extends BaseProvider {
               large
             }
             episodes
+            isAdult
           }
         }
       }
@@ -87,6 +99,7 @@ export class MegaPlayProvider extends BaseProvider {
         thumbnailUrl: media.coverImage.large,
         catalogType: 'ANIME',
         providerId: this.id,
+        isAdult: !!media.isAdult,
       }),
     );
   }
@@ -95,11 +108,11 @@ export class MegaPlayProvider extends BaseProvider {
     mediaId: string,
     options: CallOptions = {},
   ): Promise<IContentUnit[]> {
-    // Fetch episode count from AniList if not provided
     const graphqlQuery = `
       query ($id: Int) {
         Media (id: $id) {
           episodes
+          nextAiringEpisode { episode }
         }
       }
     `;
@@ -114,7 +127,10 @@ export class MegaPlayProvider extends BaseProvider {
     );
 
     const json = (await response.json()) as any;
-    const episodesCount = json.data?.Media?.episodes || 1; // Default to 1 if unknown
+    const media = json.data?.Media;
+    // Airing shows have no total yet; list what has aired so far.
+    const aired = media?.nextAiringEpisode?.episode ? media.nextAiringEpisode.episode - 1 : 0;
+    const episodesCount = media?.episodes || aired || 1;
 
     const units: IContentUnit[] = [];
     for (let i = 1; i <= episodesCount; i++) {
@@ -129,27 +145,47 @@ export class MegaPlayProvider extends BaseProvider {
     return units;
   }
 
+  private async fetchEmbed(url: string, options: CallOptions): Promise<string> {
+    const res = await this.http.get(url, {
+      signal: options.signal,
+      headers: { Referer: this.baseUrl },
+    });
+    return res.text();
+  }
+
+  private async malIdFor(aniId: string, options: CallOptions): Promise<number | null> {
+    const res = await this.http.post(
+      this.anilistApi,
+      {
+        query: 'query ($id: Int) { Media (id: $id) { idMal } }',
+        variables: { id: parseInt(aniId) },
+      },
+      { signal: options.signal },
+    );
+    const json = (await res.json()) as any;
+    return json.data?.Media?.idMal ?? null;
+  }
+
   protected override async resolveStreamRaw(
     unitId: string,
     language: ContentLanguage = 'sub',
     options: CallOptions = {},
   ): Promise<ResolvedMediaStream> {
     const [aniId, epNum] = unitId.split(':');
-    const embedUrl = `${this.baseUrl}/stream/ani/${aniId}/${epNum}/${language}`;
+    let embedUrl = `${this.baseUrl}/stream/ani/${aniId}/${epNum}/${language}`;
+    let embedPage = await this.fetchEmbed(embedUrl, options);
 
-    // Step 1: Fetch the embed page to get the file ID
-    // Note: referer is important for some endpoints
-    const embedResponse = await this.http.get(embedUrl, {
-      signal: options.signal,
-      headers: {
-        Referer: this.baseUrl,
-      },
-    });
-    const embedPage = await embedResponse.text();
-
-    if (embedPage.includes('<title>Error - MegaPlay</title>')) {
+    // MegaPlay's AniList mapping is incomplete; its MAL mapping covers shows it misses.
+    if (isErrorPage(embedPage)) {
+      const malId = await this.malIdFor(aniId, options);
+      if (malId) {
+        embedUrl = `${this.baseUrl}/stream/mal/${malId}/${epNum}/${language}`;
+        embedPage = await this.fetchEmbed(embedUrl, options);
+      }
+    }
+    if (isErrorPage(embedPage)) {
       throw new Error(
-        `MegaPlay has no mapping for AniList ID ${aniId} episode ${epNum} (${language})`,
+        `MegaPlay doesn't have episode ${epNum} of this show ${language === 'dub' ? 'dubbed' : 'subtitled'}`,
       );
     }
 
@@ -164,13 +200,16 @@ export class MegaPlayProvider extends BaseProvider {
     const sourcesResponse = await this.http.get(`${this.baseUrl}/stream/getSources?id=${fileId}`, {
       signal: options.signal,
       headers: {
-        Referer: `${this.baseUrl}/stream/ani/${aniId}/${epNum}/${language}`,
+        Referer: embedUrl,
         'X-Requested-With': 'XMLHttpRequest',
       },
     });
 
     const sourcesJson = (await sourcesResponse.json()) as any;
-    if (!sourcesJson.sources || !sourcesJson.sources.file) {
+    if (!sourcesJson.sources?.file) {
+      // MegaPlay now encrypts the direct URL (`enc`) and only supports playback
+      // through its embed player, so hand back the official embed page.
+      if (sourcesJson.enc) return megaPlayEmbed(embedUrl, language);
       throw new Error('No video sources found in megaplay response');
     }
 

@@ -36,6 +36,15 @@ function decodeAllAnimeSource(encoded: string): string {
   return decoded.replace(/\/clock(?=\?|$)/, '/clock.json');
 }
 
+function throwIfCaptcha(json: any): void {
+  const errors: any[] = json?.errors ?? [];
+  if (errors.some((e) => e?.message === 'NEED_CAPTCHA')) {
+    throw new Error(
+      'AllManga requires a CAPTCHA before it returns stream sources (NEED_CAPTCHA); automated access to episodes is blocked',
+    );
+  }
+}
+
 const ALLANIME_KEY_PHRASE = 'Xot36i3lK3:v1';
 const ALLANIME_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0';
@@ -242,6 +251,7 @@ export class AllmangaProvider extends BaseProvider {
       throw new Error(`Failed to load AllManga stream sources: ${res.status}`);
     }
     const json = (await res.json()) as any;
+    throwIfCaptcha(json);
 
     const tobeparsed: string | undefined = json?.data?.tobeparsed;
     if (tobeparsed) {
@@ -259,6 +269,7 @@ export class AllmangaProvider extends BaseProvider {
       throw new Error(`AllManga fallback GraphQL failed with status ${fbRes.status}`);
     }
     const fbJson = (await fbRes.json()) as any;
+    throwIfCaptcha(fbJson);
     return fbJson?.data?.episode?.sourceUrls ?? [];
   }
 

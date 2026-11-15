@@ -58,8 +58,13 @@ export interface MappingClientOptions {
   yearTolerance?: number;
   /** Tolerance for the episode-count discriminator. Default 3. */
   episodeCountTolerance?: number;
-  /** Max search candidates per provider call. Default 12. */
+  /**
+   * Max search candidates per provider call. Default 40: some sites (AllManga)
+   * don't rank by relevance, so the exact title can sit past #20.
+   */
   fuzzyCandidateLimit?: number;
+  /** How long to wait for MALSync/Anify/arm-server before fuzzy matching. Default 3000. */
+  externalTimeoutMs?: number;
   /** Max parallel `provider.search` calls during fuzzy match. Default 4. */
   fuzzyConcurrency?: number;
 }
@@ -232,16 +237,24 @@ export class MappingClient {
     // Race: resolve as soon as any task returns a non-null value.
     // We can't use Promise.any (rejects ≠ no-match), so do it manually.
     return new Promise<{ rawId: string; method: MappingMethod } | null>((resolve) => {
+      // A dead or slow mapping service must not hold up the fuzzy fallback.
+      const timer = setTimeout(() => resolve(null), this.options.externalTimeoutMs ?? 3000);
       let remaining = tasks.length;
       for (const { method, promise } of tasks) {
         promise
           .then((rawId) => {
-            if (rawId) resolve({ rawId, method });
+            if (rawId) {
+              clearTimeout(timer);
+              resolve({ rawId, method });
+            }
           })
           .catch(() => {})
           .finally(() => {
             remaining -= 1;
-            if (remaining === 0) resolve(null);
+            if (remaining === 0) {
+              clearTimeout(timer);
+              resolve(null);
+            }
           });
       }
     });
@@ -375,7 +388,7 @@ export class MappingClient {
   ): Promise<MappingResolution | null> {
     const threshold = this.options.minSimilarity ?? 0.78;
     const verifyBand = this.options.verifyBand ?? 0.07;
-    const limit = this.options.fuzzyCandidateLimit ?? 12;
+    const limit = this.options.fuzzyCandidateLimit ?? 40;
     const concurrency = this.options.fuzzyConcurrency ?? 4;
     const yearTol = this.options.yearTolerance ?? 2;
 

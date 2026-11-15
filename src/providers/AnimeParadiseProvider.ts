@@ -52,7 +52,14 @@ export class AnimeParadiseProvider extends BaseProvider {
       signal: options.signal,
     });
     const json = (await res.json()) as any;
-    const episodes: any[] = json?.data ?? [];
+    // The catalogue sometimes lists the same episode twice (identical uploads).
+    const seen = new Set<number>();
+    const episodes: any[] = (json?.data ?? []).filter((ep: any) => {
+      const n = parseFloat(ep.number);
+      if (seen.has(n)) return false;
+      seen.add(n);
+      return true;
+    });
     return episodes.map((ep) => ({
       // encode uid and animeId so resolveStream can call /ep/{uid}?origin={animeId}
       id: `${ep.uid}:${mediaId}`,

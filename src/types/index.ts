@@ -24,6 +24,8 @@ export interface IMediaSearchResult {
   providerId: string;
   /** Languages available for this title (sub/dub/raw). Omitted if unknown. */
   availableLanguages?: ContentLanguage[];
+  /** Flagged 18+ by the catalogue it came from, when known. */
+  isAdult?: boolean;
   /**
    * Year of release/publication, if the provider exposes it. The
    * metadata-layer fuzzy matcher uses this as a discriminator: when two
@@ -100,6 +102,11 @@ export interface IVideoPayload {
   language?: ContentLanguage;
   headers?: Record<string, string>;
   subtitles?: ISubtitleTrack[];
+  /**
+   * `sourceUrl` is the host's official embed player page, not a media file.
+   * It must be shown inside a web page (iframe), not handed to a media player.
+   */
+  isEmbed?: boolean;
 }
 
 export interface IMangaPayload {

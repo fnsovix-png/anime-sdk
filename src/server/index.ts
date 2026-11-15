@@ -1,4 +1,4 @@
-import * as http from 'node:http';
+﻿import * as http from 'node:http';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -28,7 +28,7 @@ export interface ServerOptions {
   providers: BaseProvider[];
   /**
    * Metadata providers exposed under `/meta/*`. AniList, MAL (Jikan), and
-   * Kitsu providers all implement {@link BaseMetadataProvider} — pass any
+   * Kitsu providers all implement {@link BaseMetadataProvider} â€” pass any
    * combination, and `/meta/*` callers select with `?provider=<id>`.
    */
   metaProviders?: BaseMetadataProvider[];
@@ -36,12 +36,12 @@ export interface ServerOptions {
   auth?: { token: string };
   /**
    * Enable the `/proxy` endpoint and automatically rewrite stream `sourceUrl` values
-   * to go through it — so browsers can play streams that require custom headers.
+   * to go through it â€” so browsers can play streams that require custom headers.
    */
   proxy?: boolean;
   /**
    * Explicit `proxyBase` URL. When omitted (default), the server derives
-   * the base from each incoming request's `Host` header — so the SDK
+   * the base from each incoming request's `Host` header â€” so the SDK
    * works behind reverse proxies / on cloud hosts without configuration.
    * Set this when the public URL differs from what `Host` reports
    * (e.g. `https://api.example.com` proxied to an internal `:3000`).
@@ -61,7 +61,7 @@ export interface ServerOptions {
    * permitted to fetch. Each entry is matched as a *suffix* of the target
    * URL's hostname, so `"wixstatic.com"` covers `static.wixstatic.com`
    * and friends. When set, targets outside the list are rejected with 403
-   * — defends against SSRF (the proxy otherwise turns the server into an
+   * â€” defends against SSRF (the proxy otherwise turns the server into an
    * open HTTP relay). When omitted, all hosts are allowed.
    */
   proxyAllowedHosts?: string[];
@@ -227,7 +227,7 @@ export function startServer(options: ServerOptions): http.Server {
     proxyAllowedHosts,
   } = options;
 
-  // Token → completed download, cleaned up after 10 minutes or on serve
+  // Token â†’ completed download, cleaned up after 10 minutes or on serve
   const pendingDownloads = new Map<
     string,
     {
@@ -321,13 +321,27 @@ export function startServer(options: ServerOptions): http.Server {
     };
   }
 
+  // Identical requests that arrive together share one upstream call.
+  const inFlight = new Map<string, Promise<unknown>>();
+
   async function cached<T>(key: string, compute: () => Promise<T>): Promise<T> {
-    if (!cache) return compute();
-    const hit = await cache.get(key);
-    if (hit !== undefined) return hit as T;
-    const value = await compute();
-    await cache.set(key, value);
-    return value;
+    if (cache) {
+      const hit = await cache.get(key);
+      if (hit !== undefined) return hit as T;
+    }
+    const pending = inFlight.get(key);
+    if (pending) return pending as Promise<T>;
+    const run = (async () => {
+      try {
+        const value = await compute();
+        if (cache) await cache.set(key, value);
+        return value;
+      } finally {
+        inFlight.delete(key);
+      }
+    })();
+    inFlight.set(key, run);
+    return run;
   }
 
   const server = http.createServer(async (req, res) => {
@@ -347,6 +361,16 @@ export function startServer(options: ServerOptions): http.Server {
       return;
     }
 
+    // Kept above the auth gate: uptime pingers and the app's wake probe use it.
+    if (url.pathname === '/health' || url.pathname === '/warm') {
+      return json(res, 200, {
+        ok: true,
+        providers: providers.map((p) => p.id),
+        metaProviders: metaProviders.map((p) => p.id),
+        proxy,
+      });
+    }
+
     if (auth) {
       const header = req.headers['authorization'] ?? '';
       const token = header.startsWith('Bearer ') ? header.slice(7) : '';
@@ -355,7 +379,7 @@ export function startServer(options: ServerOptions): http.Server {
 
     if (req.method !== 'GET') return err(res, 405, 'Method not allowed');
 
-    // ── Discovery ────────────────────────────────────────────────────────
+    // â”€â”€ Discovery â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (url.pathname === '/openapi.json') {
       const spec = buildOpenApiSpec({
         providerIds: providers.map((p) => p.id),
@@ -366,15 +390,6 @@ export function startServer(options: ServerOptions): http.Server {
       return json(res, 200, spec);
     }
 
-    if (url.pathname === '/health') {
-      return json(res, 200, {
-        ok: true,
-        providers: providers.map((p) => p.id),
-        metaProviders: metaProviders.map((p) => p.id),
-        proxy,
-      });
-    }
-
     const findProvider = (id: string | null): BaseProvider | null =>
       id ? (providers.find((p) => p.id === id) ?? null) : null;
 
@@ -382,10 +397,10 @@ export function startServer(options: ServerOptions): http.Server {
       id ? (metaProviders.find((p) => p.id === id) ?? null) : null;
 
     try {
-      // ── Proxy ──────────────────────────────────────────────────────────
+      // â”€â”€ Proxy â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       if (url.pathname === '/proxy') {
         if (!proxy)
-          return err(res, 404, 'Proxy not enabled — set proxy: true in startServer options');
+          return err(res, 404, 'Proxy not enabled â€” set proxy: true in startServer options');
 
         const targetUrl = q.get('url');
         if (!targetUrl) return err(res, 400, 'Missing param: url');
@@ -472,7 +487,7 @@ export function startServer(options: ServerOptions): http.Server {
           const text = await upstream.text();
           // Also check by body content in case Content-Type is wrong
           if (!text.trim().startsWith('#EXTM3U') && !looksLikeHls) {
-            // Not actually an HLS manifest — fall through to stream it
+            // Not actually an HLS manifest â€” fall through to stream it
           } else {
             const rewritten = rewriteHls(text, targetUrl, proxyBase, hParam ?? undefined);
             const buf = Buffer.from(rewritten, 'utf8');
@@ -486,8 +501,8 @@ export function startServer(options: ServerOptions): http.Server {
           }
         }
 
-        // For non-HLS (segments, MP4, etc.) — stream without buffering
-        // Some CDNs disguise .ts segments as image/* or text/* — override the type
+        // For non-HLS (segments, MP4, etc.) â€” stream without buffering
+        // Some CDNs disguise .ts segments as image/* or text/* â€” override the type
         const ctOverride = q.get('ct');
         let contentType = ct || 'application/octet-stream';
         if (ctOverride) {
@@ -529,7 +544,7 @@ export function startServer(options: ServerOptions): http.Server {
         return;
       }
 
-      // ── API ────────────────────────────────────────────────────────────
+      // â”€â”€ API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       // Each handler runs its provider call through the optional `cache`.
       // Keys are namespaced by endpoint + provider so the consumer's cache
       // can apply different TTLs per kind if it wants to.
@@ -575,7 +590,7 @@ export function startServer(options: ServerOptions): http.Server {
         if (!unitId) return err(res, 400, 'Missing param: unitId');
         if (!provider) return err(res, 400, 'Missing or unknown param: provider');
         // Only the cheap metadata path. Providers without `fetchUnitTracks`
-        // return 501 — clients should fall back to /stream's subtitle info
+        // return 501 â€” clients should fall back to /stream's subtitle info
         // rather than pay the resolveStream cost twice.
         if (!provider.fetchUnitTracks) {
           return err(
@@ -591,7 +606,7 @@ export function startServer(options: ServerOptions): http.Server {
         return json(res, 200, tracks);
       }
 
-      // ── Download: Video — SSE progress ───────────────────────────────
+      // â”€â”€ Download: Video â€” SSE progress â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       if (url.pathname === '/download/video/progress') {
         const unitId = q.get('unitId');
         const provider = findProvider(q.get('provider'));
@@ -601,7 +616,7 @@ export function startServer(options: ServerOptions): http.Server {
 
         const send = openSse(res);
         try {
-          send({ type: 'progress', phase: 'resolving', detail: 'Resolving stream…' });
+          send({ type: 'progress', phase: 'resolving', detail: 'Resolving streamâ€¦' });
           const stream = await cached(`stream:${provider.id}:${unitId}:${language ?? ''}`, () =>
             provider.resolveStream(unitId, language ?? undefined),
           );
@@ -643,13 +658,13 @@ export function startServer(options: ServerOptions): http.Server {
         return;
       }
 
-      // ── Download: Video — serve completed file ────────────────────────
+      // â”€â”€ Download: Video â€” serve completed file â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       if (url.pathname === '/download/video/file') {
         servePending(res, q.get('token'), 'video/mp4');
         return;
       }
 
-      // ── Download: Manga Chapter — SSE progress ────────────────────────
+      // â”€â”€ Download: Manga Chapter â€” SSE progress â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       if (url.pathname === '/download/manga/chapter/progress') {
         const unitId = q.get('unitId');
         const provider = findProvider(q.get('provider'));
@@ -699,13 +714,13 @@ export function startServer(options: ServerOptions): http.Server {
         return;
       }
 
-      // ── Download: Manga Chapter — serve completed file ────────────────
+      // â”€â”€ Download: Manga Chapter â€” serve completed file â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       if (url.pathname === '/download/manga/chapter/file') {
         servePending(res, q.get('token'), 'application/zip');
         return;
       }
 
-      // ── Download: Video ───────────────────────────────────────────────
+      // â”€â”€ Download: Video â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       if (url.pathname === '/download/video') {
         const unitId = q.get('unitId');
         const provider = findProvider(q.get('provider'));
@@ -765,7 +780,7 @@ export function startServer(options: ServerOptions): http.Server {
         return;
       }
 
-      // ── Download: Manga Page ────────────────────────────────────────────
+      // â”€â”€ Download: Manga Page â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       if (url.pathname === '/download/manga/page') {
         const unitId = q.get('unitId');
         const provider = findProvider(q.get('provider'));
@@ -839,7 +854,7 @@ export function startServer(options: ServerOptions): http.Server {
         return;
       }
 
-      // ── Download: Manga Chapter (ZIP) ──────────────────────────────────
+      // â”€â”€ Download: Manga Chapter (ZIP) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       if (url.pathname === '/download/manga/chapter') {
         const unitId = q.get('unitId');
         const provider = findProvider(q.get('provider'));
@@ -898,7 +913,7 @@ export function startServer(options: ServerOptions): http.Server {
         return;
       }
 
-      // ── Metadata layer ───────────────────────────────────────────────
+      // â”€â”€ Metadata layer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       // Routes:
       //   /meta/search   ?provider=anilist&q=<query>
       //   /meta/info     ?provider=anilist&id=<metaUrn>

@@ -1,6 +1,7 @@
 import { BaseProvider, CallOptions } from './BaseProvider.js';
 import { HttpClient } from '../transport/http.js';
 import { DomRegistry } from '../transport/dom.js';
+import { megaPlayEmbed } from './MegaPlayProvider.js';
 import {
   IMediaSearchResult,
   IContentUnit,
@@ -124,7 +125,8 @@ export class AnikotoProvider extends BaseProvider {
     );
 
     const sourcesJson = (await sourcesResponse.json()) as any;
-    if (!sourcesJson.sources || !sourcesJson.sources.file) {
+    if (!sourcesJson.sources?.file) {
+      if (sourcesJson.enc) return megaPlayEmbed(embedUrl, language);
       throw new Error('No video sources found in megaplay response');
     }
 

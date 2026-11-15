@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: vortex-anime-api
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: API_TOKEN
+        sync: false
+      - key: PORT
+        value: 8080

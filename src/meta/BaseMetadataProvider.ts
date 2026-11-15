@@ -248,15 +248,37 @@ export abstract class BaseMetadataProvider {
       if (typeof ep.number === 'number') byNumber.set(ep.number, ep);
     }
     if (byNumber.size === 0) return units;
+
+    // Catalogue episode data is sometimes attached to the wrong season. When
+    // most of the provider's real titles disagree with it, don't use it.
+    let compared = 0;
+    let agreed = 0;
+    for (const u of units) {
+      const ext = byNumber.get(u.number);
+      if (!ext?.title || isGenericEpisodeTitle(u.title)) continue;
+      compared++;
+      const a = normalizeEpisodeTitle(u.title!);
+      const b = normalizeEpisodeTitle(ext.title);
+      if (a && b && (a.includes(b) || b.includes(a))) agreed++;
+    }
+    if (compared >= 3) {
+      if (agreed / compared < 0.5) return units;
+    } else if (
+      metadata.episodeCount &&
+      metadata.streamingEpisodes!.length > metadata.episodeCount
+    ) {
+      // Nothing to check against, and the list is longer than the season: it
+      // likely belongs to another season, so plain "Episode N" is safer.
+      return units;
+    }
+
     return units.map((u) => {
       const ext = byNumber.get(u.number);
       if (!ext) return u;
       return {
         ...u,
-        // Prefer extended title only when meaningfully different (content
-        // provider's "Episode 5" is barren; meta's "The Plan to Defeat …" is
-        // what we actually want to surface).
-        title: ext.title ?? u.title,
+        // The provider's own title wins; a barren "Episode 5" is replaced.
+        title: isGenericEpisodeTitle(u.title) ? (ext.title ?? u.title) : u.title,
         ...(ext.thumbnail ? { thumbnailUrl: ext.thumbnail } : {}),
         ...(ext.description ? { description: ext.description } : {}),
         ...(typeof ext.isFiller === 'boolean' ? { isFiller: ext.isFiller } : {}),
@@ -374,4 +396,16 @@ function shouldTryAbsolute(
   // with an offset if the provider has > 1.5× the requested number of
   // episodes, indicating a multi-season concatenation.
   return max >= requestedNumber * 1.5;
+}
+
+function isGenericEpisodeTitle(title: string | undefined): boolean {
+  return !title || /^(episode|ep\.?)\s*\d+$/i.test(title.trim());
+}
+
+function normalizeEpisodeTitle(title: string): string {
+  return title
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&amp;/g, '&')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
 }
