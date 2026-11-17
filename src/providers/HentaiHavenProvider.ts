@@ -31,6 +31,16 @@ function pageHeaders(): Record<string, string> {
     Referer: `${SITE}/`,
     // Cloudflare answers 403 to fetch; the curl transport gets the real page.
     'x-force-curl': '1',
+    // Client hints make curl look like a real browser request, which matters on
+    // datacenter IPs where the challenge is strict.
+    'sec-ch-ua': '"Chromium";v="125", "Not.A/Brand";v="24"',
+    'sec-ch-ua-mobile': '?0',
+    'sec-ch-ua-platform': '"Windows"',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'same-origin',
+    'Sec-Fetch-User': '?1',
+    'Upgrade-Insecure-Requests': '1',
   };
 }
 
