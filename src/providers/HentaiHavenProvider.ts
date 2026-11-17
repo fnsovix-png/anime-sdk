@@ -122,11 +122,7 @@ export class HentaiHavenProvider extends BaseProvider {
     query: string,
     options: CallOptions = {},
   ): Promise<IMediaSearchResult[]> {
-    const res = await this.http.get(`${SITE}/?s=${encodeURIComponent(query)}`, {
-      headers: pageHeaders(),
-      signal: options.signal,
-    });
-    const html = await res.text();
+    const html = await this.page(`/?s=${encodeURIComponent(query)}`, options.signal);
     return parseCards(html)
       .slice(0, 20)
       .map((card) => ({
@@ -145,11 +141,7 @@ export class HentaiHavenProvider extends BaseProvider {
     options: CallOptions = {},
   ): Promise<IContentUnit[]> {
     const slug = slugOf(mediaId);
-    const res = await this.http.get(`${SITE}/watch/${slug}/`, {
-      headers: pageHeaders(),
-      signal: options.signal,
-    });
-    const html = await res.text();
+    const html = await this.page(`/watch/${slug}/`, options.signal);
     const numbers = new Set<number>();
     const re = new RegExp(`/watch/${slug}/episode-(\\d+)/`, 'gi');
     let m: RegExpExecArray | null;
@@ -169,6 +161,27 @@ export class HentaiHavenProvider extends BaseProvider {
       }));
   }
 
+  /**
+   * Loads a site page. Cloudflare refuses this host's IP with a 403, so the
+   * request goes through a text proxy that returns the same HTML, and only
+   * falls back to the site directly if that proxy fails.
+   */
+  private async page(path: string, signal?: AbortSignal): Promise<string> {
+    const url = `${SITE}${path}`;
+    try {
+      const viaProxy = await this.http.get(`https://r.jina.ai/${url}`, {
+        headers: { ...pageHeaders(), 'x-respond-with': 'html' },
+        signal,
+      });
+      const html = await viaProxy.text();
+      if (viaProxy.ok && html.includes('/watch/')) return html;
+    } catch {
+      /* fall through to a direct request */
+    }
+    const direct = await this.http.get(url, { headers: pageHeaders(), signal });
+    return direct.text();
+  }
+
   private async masterFor(
     unitId: string,
     options: CallOptions,
@@ -176,11 +189,7 @@ export class HentaiHavenProvider extends BaseProvider {
     const slug = slugOf(unitId);
     const ep = /episode-(\d+)/.exec(unitId);
     const path = ep ? `/watch/${slug}/episode-${ep[1]}/` : `/watch/${slug}/`;
-    const res = await this.http.get(`${SITE}${path}`, {
-      headers: pageHeaders(),
-      signal: options.signal,
-    });
-    const html = await res.text();
+    const html = await this.page(path, options.signal);
     const found = /https?:\/\/[^"'\\\s]+\.m3u8[^"'\\\s]*/.exec(html);
     if (!found) throw new Error('HentaiHaven: no playlist on that episode page');
     const url = found[0];
